@@ -25,21 +25,30 @@ CURL_CMD="curl -s"
 
 # 0. 자가 업데이트 함수
 check_for_updates() {
-    # 0.1. Check for script updates
-    log "Checking script version (current: $SCRIPT_VERSION)..."
-    REMOTE_VERSION_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/agent/version.txt"
-    LATEST_SCRIPT_VERSION=$($CURL_CMD -s "$REMOTE_VERSION_URL" || echo "$SCRIPT_VERSION")
+    # Prevent infinite loop during self-update
+    if [[ "$1" == "--no-self-update" ]]; then
+        shift
+        return
+    fi
 
-    if [[ "$LATEST_SCRIPT_VERSION" != "$SCRIPT_VERSION" ]]; then
-        log "New script version found: $LATEST_SCRIPT_VERSION. Proceeding with update."
-        NEW_SCRIPT="${AGENT_DIR}/collect-sbom.sh.new"
-        REMOTE_SCRIPT_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/agent/collect-sbom.sh"
-        if $CURL_CMD -s -o "$NEW_SCRIPT" "$REMOTE_SCRIPT_URL"; then
+    # 0.1. Always download the latest script
+    log "Fetching latest script from Nexus3..."
+    NEW_SCRIPT="${AGENT_DIR}/collect-sbom.sh.new"
+    REMOTE_SCRIPT_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/agent/collect-sbom.sh"
+    
+    # Try to download. If it fails (e.g. network issue), just proceed with current script.
+    if $CURL_CMD -s -o "$NEW_SCRIPT" "$REMOTE_SCRIPT_URL"; then
+        if ! diff -q "$NEW_SCRIPT" "$(realpath $0)" >/dev/null 2>&1; then
+            log "Newer or different script found. Updating and restarting..."
             mv "$NEW_SCRIPT" "$(realpath $0)"
             chmod +x "$(realpath $0)"
-            log "Script update completed. Restarting..."
-            exec bash "$(realpath $0)" "$@"
+            exec bash "$(realpath $0)" --no-self-update "$@"
+        else
+            log "Script is already the latest version."
+            rm -f "$NEW_SCRIPT"
         fi
+    else
+        log "[WARN] Failed to fetch latest script from Nexus. Proceeding with current version."
     fi
 
     # 0.2. Check for Syft binary updates
