@@ -11,6 +11,7 @@ set -e
 # 환경 설정 (운영 환경에 맞게 수정 필요)
 NEXUS_URL="http://your-nexus-server:8081"
 NEXUS_REPO="sbom-monitor-raw"
+NEXUS_SYFT_REPO="sbom-monitor-raw" # Repository where Syft binaries are stored
 BLACKDUCK_URL="https://your-blackduck-server"
 BLACKDUCK_TOKEN="YOUR_API_TOKEN"
 
@@ -52,29 +53,36 @@ check_for_updates() {
     fi
 
     # 0.2. Check for Syft binary updates
-    log "Checking Syft version..."
-    # Check current Syft version (if file exists)
+    log "Checking for Syft binary updates..."
+    
+    # Get current Syft version (if file exists)
     CURRENT_SYFT_VER="none"
     if [[ -x "$SYFT_BIN" ]]; then
         CURRENT_SYFT_VER=$($SYFT_BIN --version | awk '{print $2}' || echo "none")
     fi
 
-    # Check the latest Syft version info from Nexus3 (e.g., syft_version.txt)
-    REMOTE_SYFT_VER_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/syft/latest_version.txt"
-    LATEST_SYFT_VER=$($CURL_CMD -s "$REMOTE_SYFT_VER_URL" || echo "$CURRENT_SYFT_VER")
+    # Fetch latest Syft asset info from Nexus3 Search API
+    ARCH=$(uname -m)
+    SYFT_ARCH="amd64"
+    [[ "$ARCH" == "aarch64" ]] && SYFT_ARCH="arm64"
+    
+    # Search for latest asset matching syft_*_linux_{arch}.tar.gz
+    # Sorting by version descending to get the latest
+    SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&name=syft_*_linux_${SYFT_ARCH}.tar.gz&sort=version&direction=desc"
+    
+    log "Searching for latest Syft binary via Nexus API..."
+    SEARCH_RESPONSE=$($CURL_CMD "$SEARCH_URL")
+    
+    # Extract downloadUrl and version from the first asset in the search results
+    # Using grep/sed for compatibility in environments without jq
+    SYFT_URL=$(echo "$SEARCH_RESPONSE" | grep -oP '"downloadUrl"\s*:\s*"\K[^"]+' | head -n 1)
+    LATEST_SYFT_VER=$(echo "$SYFT_URL" | grep -oP 'syft_\K[^_]+' | head -n 1)
 
-    if [[ "$LATEST_SYFT_VER" != "$CURRENT_SYFT_VER" && "$LATEST_SYFT_VER" != "none" ]]; then
-        log "New Syft version found: $LATEST_SYFT_VER (current: $CURRENT_SYFT_VER). Proceeding with update."
+    if [[ -z "$SYFT_URL" ]]; then
+        log "[WARN] Failed to find Syft binary in Nexus via Search API. Skipping update."
+    elif [[ "$LATEST_SYFT_VER" != "$CURRENT_SYFT_VER" && "$LATEST_SYFT_VER" != "none" ]]; then
+        log "New Syft version found: $LATEST_SYFT_VER (current: $CURRENT_SYFT_VER). Downloading from $SYFT_URL"
         
-        ARCH=$(uname -m)
-        SYFT_ARCH="amd64"
-        [[ "$ARCH" == "aarch64" ]] && SYFT_ARCH="arm64"
-        
-        # File naming convention: syft_{version}_linux_{arch}.tar.gz
-        SYFT_FILE="syft_${LATEST_SYFT_VER}_linux_${SYFT_ARCH}.tar.gz"
-        SYFT_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/syft/${LATEST_SYFT_VER}/${SYFT_FILE}"
-        
-        log "Downloading latest Syft binary from Nexus3... ($SYFT_URL)"
         if $CURL_CMD -o "${AGENT_DIR}/syft.tar.gz" "$SYFT_URL"; then
             # Backup existing binary and replace
             [[ -f "$SYFT_BIN" ]] && mv "$SYFT_BIN" "${SYFT_BIN}.old"
@@ -85,8 +93,10 @@ check_for_updates() {
             rm -f "${AGENT_DIR}/syft.tar.gz" "${SYFT_BIN}.old"
             log "Syft updated to version $LATEST_SYFT_VER."
         else
-            log "[WARN] Failed to download Syft. Keeping existing version."
+            log "[WARN] Failed to download Syft from $SYFT_URL. Keeping existing version."
         fi
+    else
+        log "Syft is already the latest version ($CURRENT_SYFT_VER)."
     fi
 }
 
@@ -104,7 +114,7 @@ setup_agent() {
     # Create agent directory
     mkdir -p "$AGENT_DIR"
 
-    # Check system architecture and download Syft
+    # Check system architecture
     ARCH=$(uname -m)
     SYFT_ARCH="amd64"
     [[ "$ARCH" == "aarch64" ]] && SYFT_ARCH="arm64"
@@ -113,17 +123,18 @@ setup_agent() {
         exit 1
     fi
 
-    # Check the latest Syft version from Nexus3
-    REMOTE_SYFT_VER_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/syft/latest_version.txt"
-    SYFT_VERSION=$($CURL_CMD "$REMOTE_SYFT_VER_URL")
-    if [[ -z "$SYFT_VERSION" ]]; then
-        log "[ERROR] Failed to fetch latest Syft version info from Nexus3."
+    # Search for latest Syft binary via Nexus3 Search API
+    SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&name=syft_*_linux_${SYFT_ARCH}.tar.gz&sort=version&direction=desc"
+    log "Searching for latest Syft binary via Nexus API..."
+    SEARCH_RESPONSE=$($CURL_CMD "$SEARCH_URL")
+    
+    SYFT_URL=$(echo "$SEARCH_RESPONSE" | grep -oP '"downloadUrl"\s*:\s*"\K[^"]+' | head -n 1)
+    SYFT_VERSION=$(echo "$SYFT_URL" | grep -oP 'syft_\K[^_]+' | head -n 1)
+
+    if [[ -z "$SYFT_URL" ]]; then
+        log "[ERROR] Failed to find Syft binary in Nexus via Search API."
         exit 1
     fi
-
-    # File naming convention: syft_{version}_linux_{arch}.tar.gz
-    SYFT_FILE="syft_${SYFT_VERSION}_linux_${SYFT_ARCH}.tar.gz"
-    SYFT_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/syft/${SYFT_VERSION}/${SYFT_FILE}"
 
     log "Downloading Syft ${SYFT_VERSION} from Nexus3... ($SYFT_URL)"
     if ! $CURL_CMD -o "${AGENT_DIR}/syft.tar.gz" "$SYFT_URL"; then
