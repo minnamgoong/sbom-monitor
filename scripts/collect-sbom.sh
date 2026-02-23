@@ -21,8 +21,14 @@ AGENT_DIR="${SCRIPT_DIR}/bin"
 OUTPUT_DIR="${SCRIPT_DIR}/output"
 SYFT_BIN="${AGENT_DIR}/syft"
 LOG_FILE="${SCRIPT_DIR}/log/sbom-monitor.log"
-SCRIPT_VERSION="v1.0.0"
+SCRIPT_VERSION="v1.0.0" # Internal version tracking
 CURL_CMD="curl -s"
+
+# 로그 기록 함수
+log() {
+    mkdir -p "$(dirname "$LOG_FILE")"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
 
 # 0. 자가 업데이트 함수
 check_for_updates() {
@@ -39,7 +45,7 @@ check_for_updates() {
     
     # Try to download. If it fails (e.g. network issue), just proceed with current script.
     echo "[DEBUG] Executing: $CURL_CMD -o \"$NEW_SCRIPT\" \"$REMOTE_SCRIPT_URL\""
-    if $CURL_CMD -s -o "$NEW_SCRIPT" "$REMOTE_SCRIPT_URL"; then
+    if $CURL_CMD -o "$NEW_SCRIPT" "$REMOTE_SCRIPT_URL"; then
         if ! diff -q "$NEW_SCRIPT" "$(realpath $0)" >/dev/null 2>&1; then
             log "Newer or different script found. Updating and restarting..."
             mv "$NEW_SCRIPT" "$(realpath $0)"
@@ -67,18 +73,17 @@ check_for_updates() {
     SYFT_ARCH="amd64"
     [[ "$ARCH" == "aarch64" ]] && SYFT_ARCH="arm64"
     
-    # Search for latest asset matching syft_*_linux_{arch}.tar.gz
-    # Sorting by version descending to get the latest
-    SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&name=syft_*_linux_${SYFT_ARCH}.tar.gz&sort=version&direction=desc"
+    # Search using a general keyword query (q=syft) to bypass raw repo restrictions on 'name' and 'version' properties
+    SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&q=syft"
     
     log "Searching for latest Syft binary via Nexus API..."
     echo "[DEBUG] Executing: $CURL_CMD \"$SEARCH_URL\""
     SEARCH_RESPONSE=$($CURL_CMD "$SEARCH_URL")
     
-    # Extract downloadUrl and version from the first asset in the search results
-    # Using grep/sed for compatibility in environments without jq
-    SYFT_URL=$(echo "$SEARCH_RESPONSE" | grep -oP '"downloadUrl"\s*:\s*"\K[^"]+' | head -n 1)
-    LATEST_SYFT_VER=$(echo "$SYFT_URL" | grep -oP 'syft_\K[^_]+' | head -n 1)
+    # Extract all download URLs, filter by architecture, sort by version locally, and pick the latest one
+    # This avoids jq and grep -P dependency while ensuring we get the highest version
+    SYFT_URL=$(echo "$SEARCH_RESPONSE" | grep '"downloadUrl"' | cut -d'"' -f4 | grep "syft_.*_linux_${SYFT_ARCH}\.tar\.gz" | sort -V | tail -n 1)
+    LATEST_SYFT_VER=$(echo "$SYFT_URL" | sed -n 's/.*syft_\([^_]*\)_linux.*/\1/p')
 
     if [[ -z "$SYFT_URL" ]]; then
         log "[WARN] Failed to find Syft binary in Nexus via Search API. Skipping update."
@@ -103,13 +108,6 @@ check_for_updates() {
     fi
 }
 
-
-# 로그 기록 함수
-log() {
-    mkdir -p "$(dirname "$LOG_FILE")"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
-}
-
 # 2. Initial Setup/Configuration function (Setup Mode)
 setup_agent() {
     log "Starting initial setup..."
@@ -127,13 +125,13 @@ setup_agent() {
     fi
 
     # Search for latest Syft binary via Nexus3 Search API
-    SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&name=syft_*_linux_${SYFT_ARCH}.tar.gz&sort=version&direction=desc"
+    SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&q=syft"
     log "Searching for latest Syft binary via Nexus API..."
     echo "[DEBUG] Executing: $CURL_CMD \"$SEARCH_URL\""
     SEARCH_RESPONSE=$($CURL_CMD "$SEARCH_URL")
     
-    SYFT_URL=$(echo "$SEARCH_RESPONSE" | grep -oP '"downloadUrl"\s*:\s*"\K[^"]+' | head -n 1)
-    SYFT_VERSION=$(echo "$SYFT_URL" | grep -oP 'syft_\K[^_]+' | head -n 1)
+    SYFT_URL=$(echo "$SEARCH_RESPONSE" | grep '"downloadUrl"' | cut -d'"' -f4 | grep "syft_.*_linux_${SYFT_ARCH}\.tar\.gz" | sort -V | tail -n 1)
+    SYFT_VERSION=$(echo "$SYFT_URL" | sed -n 's/.*syft_\([^_]*\)_linux.*/\1/p')
 
     if [[ -z "$SYFT_URL" ]]; then
         log "[ERROR] Failed to find Syft binary in Nexus via Search API."
