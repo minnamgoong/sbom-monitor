@@ -38,6 +38,7 @@ check_for_updates() {
     REMOTE_SCRIPT_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/agent/collect-sbom.sh"
     
     # Try to download. If it fails (e.g. network issue), just proceed with current script.
+    echo "[DEBUG] Executing: $CURL_CMD -o \"$NEW_SCRIPT\" \"$REMOTE_SCRIPT_URL\""
     if $CURL_CMD -s -o "$NEW_SCRIPT" "$REMOTE_SCRIPT_URL"; then
         if ! diff -q "$NEW_SCRIPT" "$(realpath $0)" >/dev/null 2>&1; then
             log "Newer or different script found. Updating and restarting..."
@@ -71,6 +72,7 @@ check_for_updates() {
     SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&name=syft_*_linux_${SYFT_ARCH}.tar.gz&sort=version&direction=desc"
     
     log "Searching for latest Syft binary via Nexus API..."
+    echo "[DEBUG] Executing: $CURL_CMD \"$SEARCH_URL\""
     SEARCH_RESPONSE=$($CURL_CMD "$SEARCH_URL")
     
     # Extract downloadUrl and version from the first asset in the search results
@@ -83,6 +85,7 @@ check_for_updates() {
     elif [[ "$LATEST_SYFT_VER" != "$CURRENT_SYFT_VER" && "$LATEST_SYFT_VER" != "none" ]]; then
         log "New Syft version found: $LATEST_SYFT_VER (current: $CURRENT_SYFT_VER). Downloading from $SYFT_URL"
         
+        echo "[DEBUG] Executing: $CURL_CMD -o \"${AGENT_DIR}/syft.tar.gz\" \"$SYFT_URL\""
         if $CURL_CMD -o "${AGENT_DIR}/syft.tar.gz" "$SYFT_URL"; then
             # Backup existing binary and replace
             [[ -f "$SYFT_BIN" ]] && mv "$SYFT_BIN" "${SYFT_BIN}.old"
@@ -126,6 +129,7 @@ setup_agent() {
     # Search for latest Syft binary via Nexus3 Search API
     SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&name=syft_*_linux_${SYFT_ARCH}.tar.gz&sort=version&direction=desc"
     log "Searching for latest Syft binary via Nexus API..."
+    echo "[DEBUG] Executing: $CURL_CMD \"$SEARCH_URL\""
     SEARCH_RESPONSE=$($CURL_CMD "$SEARCH_URL")
     
     SYFT_URL=$(echo "$SEARCH_RESPONSE" | grep -oP '"downloadUrl"\s*:\s*"\K[^"]+' | head -n 1)
@@ -137,6 +141,7 @@ setup_agent() {
     fi
 
     log "Downloading Syft ${SYFT_VERSION} from Nexus3... ($SYFT_URL)"
+    echo "[DEBUG] Executing: $CURL_CMD -o \"${AGENT_DIR}/syft.tar.gz\" \"$SYFT_URL\""
     if ! $CURL_CMD -o "${AGENT_DIR}/syft.tar.gz" "$SYFT_URL"; then
         log "[ERROR] Failed to download Syft."
         exit 1
@@ -254,6 +259,7 @@ run_scan() {
     # Black Duck Upload Logic
     # Upload the integrated SBOM file through the latest Black Duck API (/api/scan/data).
     log "Sending integrated SBOM to Black Duck (Project: $BD_PROJECT_NAME, Version: $BD_VERSION)..."
+    # echo "[DEBUG] Executing: curl -X POST \"${BLACKDUCK_URL}/api/scan/data?projectName=${BD_PROJECT_NAME}&versionName=${BD_VERSION}\" -H \"Authorization: Bearer \$BLACKDUCK_TOKEN\" -H \"Content-Type: multipart/form-data\" -F \"file=@$OUTPUT_FILE;type=application/vnd.cyclonedx\""
     # curl -X POST "${BLACKDUCK_URL}/api/scan/data?projectName=${BD_PROJECT_NAME}&versionName=${BD_VERSION}" \
     #      -H "Authorization: Bearer $BLACKDUCK_TOKEN" \
     #      -H "Content-Type: multipart/form-data" \
