@@ -22,7 +22,7 @@ OUTPUT_DIR="${SCRIPT_DIR}/output"
 SYFT_BIN="${AGENT_DIR}/syft"
 LOG_FILE="${SCRIPT_DIR}/log/sbom-monitor.log"
 SCRIPT_VERSION="v1.0.0" # Internal version tracking
-CURL_CMD="curl -s"
+CURL_CMD="curl -sSfL" # -s: silent, -S: show error, -f: fail on error, -L: follow redirects
 
 # 로그 기록 함수
 log() {
@@ -32,6 +32,8 @@ log() {
 
 # 0. 자가 업데이트 함수
 check_for_updates() {
+    # Ensure bin directory exists for temp files to avoid curl (23) error
+    mkdir -p "$AGENT_DIR"
     # Prevent infinite loop during self-update
     if [[ "$1" == "--no-self-update" ]]; then
         shift
