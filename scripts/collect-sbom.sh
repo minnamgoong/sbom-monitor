@@ -30,6 +30,56 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
+# 최신 Syft 다운로드 URL 검색 함수
+find_latest_syft_url() {
+    # Check system architecture
+    ARCH=$(uname -m)
+    SYFT_ARCH="amd64"
+    [[ "$ARCH" == "aarch64" ]] && SYFT_ARCH="arm64"
+    if [[ "$ARCH" != "x86_64" && "$ARCH" != "aarch64" ]]; then
+        log "[ERROR] Unsupported architecture: $ARCH"
+        exit 1
+    fi
+
+    # Search using a general keyword query (q=syft) to bypass raw repo restrictions on 'name' and 'version' properties
+    SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&q=syft"
+    
+    log "Searching for latest Syft binary via Nexus API..."
+    echo "[DEBUG] Executing: curl -sSL \"$SEARCH_URL\""
+    # -f 옵션을 제외하여 인증 에러(401/403) 등이 나더라도 본문을 받아오도록 조치
+    SEARCH_RESPONSE=$(curl -sSL "$SEARCH_URL")
+    
+    if [[ -z "$SEARCH_RESPONSE" || ! "$SEARCH_RESPONSE" =~ "downloadUrl" ]]; then
+        echo "[DEBUG] API Response does not contain expected data. Raw Response:"
+        echo "$SEARCH_RESPONSE"
+    fi
+    
+    # Extract all download URLs, filter by architecture, sort by version locally, and pick the latest one
+    # This avoids jq and grep -P dependency while ensuring we get the highest version
+    SYFT_URL=$(echo "$SEARCH_RESPONSE" | grep '"downloadUrl"' | cut -d'"' -f4 | grep "syft_.*_linux_${SYFT_ARCH}\.tar\.gz" | sort -V | tail -n 1)
+    LATEST_SYFT_VER=$(echo "$SYFT_URL" | sed -n 's/.*syft_\([^_]*\)_linux.*/\1/p')
+}
+
+# Syft 다운로드 및 설치 함수
+download_and_install_syft() {
+    log "Downloading Syft ${LATEST_SYFT_VER} from Nexus3... ($SYFT_URL)"
+    echo "[DEBUG] Executing: $CURL_CMD -o \"${AGENT_DIR}/syft.tar.gz\" \"$SYFT_URL\""
+    
+    if $CURL_CMD -o "${AGENT_DIR}/syft.tar.gz" "$SYFT_URL"; then
+        # Backup existing binary if it exists
+        [[ -f "$SYFT_BIN" ]] && mv "$SYFT_BIN" "${SYFT_BIN}.old"
+        
+        tar -xzf "${AGENT_DIR}/syft.tar.gz" -C "$AGENT_DIR" syft
+        chmod +x "$SYFT_BIN"
+        
+        rm -f "${AGENT_DIR}/syft.tar.gz" "${SYFT_BIN}.old"
+        log "Syft ${LATEST_SYFT_VER} installation completed: $SYFT_BIN"
+        return 0
+    else
+        return 1
+    fi
+}
+
 # 0. 자가 업데이트 함수
 check_for_updates() {
     # Ensure bin directory exists for temp files to avoid curl (23) error
@@ -70,37 +120,15 @@ check_for_updates() {
         CURRENT_SYFT_VER=$($SYFT_BIN --version | awk '{print $2}' || echo "none")
     fi
 
-    # Fetch latest Syft asset info from Nexus3 Search API
-    ARCH=$(uname -m)
-    SYFT_ARCH="amd64"
-    [[ "$ARCH" == "aarch64" ]] && SYFT_ARCH="arm64"
-    
-    # Search using a general keyword query (q=syft) to bypass raw repo restrictions on 'name' and 'version' properties
-    SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&q=syft"
-    
-    log "Searching for latest Syft binary via Nexus API..."
-    echo "[DEBUG] Executing: $CURL_CMD \"$SEARCH_URL\""
-    SEARCH_RESPONSE=$($CURL_CMD "$SEARCH_URL")
-    
-    # Extract all download URLs, filter by architecture, sort by version locally, and pick the latest one
-    # This avoids jq and grep -P dependency while ensuring we get the highest version
-    SYFT_URL=$(echo "$SEARCH_RESPONSE" | grep '"downloadUrl"' | cut -d'"' -f4 | grep "syft_.*_linux_${SYFT_ARCH}\.tar\.gz" | sort -V | tail -n 1)
-    LATEST_SYFT_VER=$(echo "$SYFT_URL" | sed -n 's/.*syft_\([^_]*\)_linux.*/\1/p')
+    # 최신 Syft 다운로드 정보 조회
+    find_latest_syft_url
 
     if [[ -z "$SYFT_URL" ]]; then
         log "[WARN] Failed to find Syft binary in Nexus via Search API. Skipping update."
     elif [[ "$LATEST_SYFT_VER" != "$CURRENT_SYFT_VER" && "$LATEST_SYFT_VER" != "none" ]]; then
-        log "New Syft version found: $LATEST_SYFT_VER (current: $CURRENT_SYFT_VER). Downloading from $SYFT_URL"
+        log "New Syft version found: $LATEST_SYFT_VER (current: $CURRENT_SYFT_VER)."
         
-        echo "[DEBUG] Executing: $CURL_CMD -o \"${AGENT_DIR}/syft.tar.gz\" \"$SYFT_URL\""
-        if $CURL_CMD -o "${AGENT_DIR}/syft.tar.gz" "$SYFT_URL"; then
-            # Backup existing binary and replace
-            [[ -f "$SYFT_BIN" ]] && mv "$SYFT_BIN" "${SYFT_BIN}.old"
-            
-            tar -xzf "${AGENT_DIR}/syft.tar.gz" -C "$AGENT_DIR" syft
-            chmod +x "$SYFT_BIN"
-            
-            rm -f "${AGENT_DIR}/syft.tar.gz" "${SYFT_BIN}.old"
+        if download_and_install_syft; then
             log "Syft updated to version $LATEST_SYFT_VER."
         else
             log "[WARN] Failed to download Syft from $SYFT_URL. Keeping existing version."
@@ -117,39 +145,18 @@ setup_agent() {
     # Create agent directory
     mkdir -p "$AGENT_DIR"
 
-    # Check system architecture
-    ARCH=$(uname -m)
-    SYFT_ARCH="amd64"
-    [[ "$ARCH" == "aarch64" ]] && SYFT_ARCH="arm64"
-    if [[ "$ARCH" != "x86_64" && "$ARCH" != "aarch64" ]]; then
-        log "[ERROR] Unsupported architecture: $ARCH"
-        exit 1
-    fi
-
-    # Search for latest Syft binary via Nexus3 Search API
-    SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&q=syft"
-    log "Searching for latest Syft binary via Nexus API..."
-    echo "[DEBUG] Executing: $CURL_CMD \"$SEARCH_URL\""
-    SEARCH_RESPONSE=$($CURL_CMD "$SEARCH_URL")
-    
-    SYFT_URL=$(echo "$SEARCH_RESPONSE" | grep '"downloadUrl"' | cut -d'"' -f4 | grep "syft_.*_linux_${SYFT_ARCH}\.tar\.gz" | sort -V | tail -n 1)
-    SYFT_VERSION=$(echo "$SYFT_URL" | sed -n 's/.*syft_\([^_]*\)_linux.*/\1/p')
+    # 최신 Syft 다운로드 정보 조회
+    find_latest_syft_url
 
     if [[ -z "$SYFT_URL" ]]; then
         log "[ERROR] Failed to find Syft binary in Nexus via Search API."
         exit 1
     fi
 
-    log "Downloading Syft ${SYFT_VERSION} from Nexus3... ($SYFT_URL)"
-    echo "[DEBUG] Executing: $CURL_CMD -o \"${AGENT_DIR}/syft.tar.gz\" \"$SYFT_URL\""
-    if ! $CURL_CMD -o "${AGENT_DIR}/syft.tar.gz" "$SYFT_URL"; then
+    if ! download_and_install_syft; then
         log "[ERROR] Failed to download Syft."
         exit 1
     fi
-    tar -xzf "${AGENT_DIR}/syft.tar.gz" -C "$AGENT_DIR" syft
-    chmod +x "$SYFT_BIN"
-    rm -f "${AGENT_DIR}/syft.tar.gz"
-    log "Syft ${SYFT_VERSION} installation completed: $SYFT_BIN"
 
     # Check required parameters for setup
     if [[ -z "$SETUP_PROJECT_NAME" ]]; then
@@ -307,11 +314,6 @@ case "$1" in
         ;;
     --scan-only)
         # Execute scan + Black Duck upload only without cron (sudo not required)
-        if [[ ! -f "$CONFIG_FILE" ]]; then
-            echo "[ERROR] Configuration file not found. Please run initial setup first."
-            exit 1
-        fi
-        
         shift
         OVERRIDE_PROJECT_NAME=""
         while [[ $# -gt 0 ]]; do
