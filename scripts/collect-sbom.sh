@@ -237,20 +237,30 @@ setup_agent() {
 
 # 3. SBOM Scan and Upload Function (Scan Mode)
 run_scan() {
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        log "[ERROR] Configuration file not found. Please run setup first."
-        exit 1
-    fi
-
-    source "$CONFIG_FILE"
-    # Override project name if OVERRIDE_PROJECT_NAME is set via command line
+    # If OVERRIDE vars are set, load them first
     if [[ -n "$OVERRIDE_PROJECT_NAME" ]]; then
         BD_PROJECT_NAME="$OVERRIDE_PROJECT_NAME"
     fi
     
-    # Override target directories if OVERRIDE_TARGET_DIRS is set via command line
     if [[ -n "$(echo $OVERRIDE_TARGET_DIRS | xargs)" ]]; then
         TARGET_DIRS="$(echo $OVERRIDE_TARGET_DIRS | xargs)"
+    fi
+
+    # Read from config if variables are missing
+    if [[ -z "$BD_PROJECT_NAME" || -z "$TARGET_DIRS" ]]; then
+        if [[ ! -f "$CONFIG_FILE" ]]; then
+            log "[ERROR] Configuration file not found and required arguments (--project-name, --target-dirs) are missing. Please run setup first or provide arguments."
+            exit 1
+        fi
+        
+        # Only source if we actually need it, but since config overrides, we have to be careful not to overwrite our overrides
+        TEMP_PROJ=$BD_PROJECT_NAME
+        TEMP_DIRS=$TARGET_DIRS
+        source "$CONFIG_FILE"
+        
+        # Re-apply overrides if they exist
+        [[ -n "$TEMP_PROJ" ]] && BD_PROJECT_NAME="$TEMP_PROJ"
+        [[ -n "$TEMP_DIRS" ]] && TARGET_DIRS="$TEMP_DIRS"
     fi
 
     HOSTNAME=$(hostname)
