@@ -56,7 +56,8 @@ find_latest_syft_url() {
     
     # Extract all download URLs, filter by architecture, sort by version locally, and pick the latest one
     # This avoids jq and grep -P dependency while ensuring we get the highest version
-    SYFT_URL=$(echo "$SEARCH_RESPONSE" | grep '"downloadUrl"' | cut -d'"' -f4 | grep "syft_.*_linux_${SYFT_ARCH}\.tar\.gz" | sort -V | tail -n 1)
+    # Nexus directory rule: the first letter of the filename is the directory name (e.g., /s/syft_...)
+    SYFT_URL=$(echo "$SEARCH_RESPONSE" | grep '"downloadUrl"' | cut -d'"' -f4 | grep "/s/syft_.*_linux_${SYFT_ARCH}\.tar\.gz" | sort -V | tail -n 1)
     LATEST_SYFT_VER=$(echo "$SYFT_URL" | sed -n 's/.*syft_\([^_]*\)_linux.*/\1/p')
 }
 
@@ -93,7 +94,8 @@ check_for_updates() {
     # 0.1. Always download the latest script
     log "Fetching latest script from Nexus3..."
     NEW_SCRIPT="${AGENT_DIR}/collect-sbom.sh.new"
-    REMOTE_SCRIPT_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/agent/collect-sbom.sh"
+    # Nexus directory rule: the first letter of the filename is the directory name
+    REMOTE_SCRIPT_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/c/collect-sbom.sh"
     
     # Try to download. If it fails (e.g. network issue), just proceed with current script.
     echo "[DEBUG] Executing: $CURL_CMD -o \"$NEW_SCRIPT\" \"$REMOTE_SCRIPT_URL\""
