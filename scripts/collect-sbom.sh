@@ -166,32 +166,32 @@ setup_agent() {
         SETUP_PROJECT_NAME="System-Name"
     fi
 
-    if [[ -z "$SETUP_TARGET_DIRS" ]]; then
-        log "[ERROR] Target directories to scan must be provided via --target-dirs."
-        echo "Usage: sudo bash $0 --setup --project-name <name> --target-dirs <dir1> <dir2>..."
+    if [[ -z "$SETUP_TARGET_PATHS" ]]; then
+        log "[ERROR] Target paths to scan must be provided via --target-path."
+        echo "Usage: sudo bash $0 --setup --project-name <name> --target-path <path1> <path2>..."
         exit 1
     fi
 
-    # Verify target directories
-    TARGET_PATHS=""
-    for INPUT_PATH in $SETUP_TARGET_DIRS; do
-        if [[ -d "$INPUT_PATH" ]]; then
-            TARGET_PATHS="$TARGET_PATHS $INPUT_PATH"
+    # Verify target paths (directories or files)
+    TARGET_PATHS_STR=""
+    for INPUT_PATH in $SETUP_TARGET_PATHS; do
+        if [[ -d "$INPUT_PATH" || -f "$INPUT_PATH" ]]; then
+            TARGET_PATHS_STR="$TARGET_PATHS_STR $INPUT_PATH"
         else
-            log "[WARN] Invalid directory: $INPUT_PATH (ignored)"
+            log "[WARN] Invalid path: $INPUT_PATH (ignored)"
         fi
     done
 
-    if [[ -z "$(echo $TARGET_PATHS | xargs)" ]]; then
-        log "[ERROR] No valid directories registered."
+    if [[ -z "$(echo $TARGET_PATHS_STR | xargs)" ]]; then
+        log "[ERROR] No valid paths registered."
         exit 1
     fi
 
     BD_PROJECT_NAME="$SETUP_PROJECT_NAME"
 
-    # Save configuration (BD_PROJECT_NAME and TARGET_DIRS)
+    # Save configuration (BD_PROJECT_NAME and TARGET_PATHS)
     echo "BD_PROJECT_NAME=\"$BD_PROJECT_NAME\"" > "$CONFIG_FILE"
-    echo "TARGET_DIRS=\"$(echo $TARGET_PATHS | xargs)\"" >> "$CONFIG_FILE"
+    echo "TARGET_PATHS=\"$(echo $TARGET_PATHS_STR | xargs)\"" >> "$CONFIG_FILE"
     echo "INSTALLED_AT=\"$(date)\"" >> "$CONFIG_FILE"
     
     log "Configuration saved: $CONFIG_FILE (Project: $BD_PROJECT_NAME)"
@@ -242,25 +242,25 @@ run_scan() {
         BD_PROJECT_NAME="$OVERRIDE_PROJECT_NAME"
     fi
     
-    if [[ -n "$(echo $OVERRIDE_TARGET_DIRS | xargs)" ]]; then
-        TARGET_DIRS="$(echo $OVERRIDE_TARGET_DIRS | xargs)"
+    if [[ -n "$(echo $OVERRIDE_TARGET_PATHS | xargs)" ]]; then
+        TARGET_PATHS="$(echo $OVERRIDE_TARGET_PATHS | xargs)"
     fi
 
     # Read from config if variables are missing
-    if [[ -z "$BD_PROJECT_NAME" || -z "$TARGET_DIRS" ]]; then
+    if [[ -z "$BD_PROJECT_NAME" || -z "$TARGET_PATHS" ]]; then
         if [[ ! -f "$CONFIG_FILE" ]]; then
-            log "[ERROR] Configuration file not found and required arguments (--project-name, --target-dirs) are missing. Please run setup first or provide arguments."
+            log "[ERROR] Configuration file not found and required arguments (--project-name, --target-path) are missing. Please run setup first or provide arguments."
             exit 1
         fi
         
         # Only source if we actually need it, but since config overrides, we have to be careful not to overwrite our overrides
         TEMP_PROJ=$BD_PROJECT_NAME
-        TEMP_DIRS=$TARGET_DIRS
+        TEMP_PATHS=$TARGET_PATHS
         source "$CONFIG_FILE"
         
         # Re-apply overrides if they exist
         [[ -n "$TEMP_PROJ" ]] && BD_PROJECT_NAME="$TEMP_PROJ"
-        [[ -n "$TEMP_DIRS" ]] && TARGET_DIRS="$TEMP_DIRS"
+        [[ -n "$TEMP_PATHS" ]] && TARGET_PATHS="$TEMP_PATHS"
     fi
 
     HOSTNAME=$(hostname)
@@ -273,23 +273,23 @@ run_scan() {
     mkdir -p "$OUTPUT_DIR"
     OUTPUT_FILE="${OUTPUT_DIR}/sbom_${BD_VERSION}.json"
 
-    log "Starting SBOM scan (Project: $BD_PROJECT_NAME, Server: $HOSTNAME, Target paths: $TARGET_DIRS)"
+    log "Starting SBOM scan (Project: $BD_PROJECT_NAME, Server: $HOSTNAME, Target paths: $TARGET_PATHS)"
     
     # Run Syft (Integrated scan of all paths, CycloneDX format)
-    # $SYFT_BIN $TARGET_DIRS -o cyclonedx-json > "$OUTPUT_FILE"
+    $SYFT_BIN $TARGET_PATHS -o cyclonedx-json > "$OUTPUT_FILE"
     
     log "SBOM generation completed: $OUTPUT_FILE"
 
     # Black Duck Upload Logic
     # Upload the integrated SBOM file through the latest Black Duck API (/api/scan/data).
     log "Sending integrated SBOM to Black Duck (Project: $BD_PROJECT_NAME, Version: $BD_VERSION)..."
-    # echo "[DEBUG] Executing: curl -X POST \"${BLACKDUCK_URL}/api/scan/data?projectName=${BD_PROJECT_NAME}&versionName=${BD_VERSION}\" -H \"Authorization: Bearer \$BLACKDUCK_TOKEN\" -H \"Content-Type: multipart/form-data\" -F \"file=@$OUTPUT_FILE;type=application/vnd.cyclonedx\""
-    # curl -X POST "${BLACKDUCK_URL}/api/scan/data?projectName=${BD_PROJECT_NAME}&versionName=${BD_VERSION}" \
-    #      -H "Authorization: Bearer $BLACKDUCK_TOKEN" \
-    #      -H "Content-Type: multipart/form-data" \
-    #      -F "file=@$OUTPUT_FILE;type=application/vnd.cyclonedx"
+    echo "[DEBUG] Executing: curl -X POST \"${BLACKDUCK_URL}/api/scan/data?projectName=${BD_PROJECT_NAME}&versionName=${BD_VERSION}\" -H \"Authorization: Bearer \$BLACKDUCK_TOKEN\" -H \"Content-Type: multipart/form-data\" -F \"file=@$OUTPUT_FILE;type=application/vnd.cyclonedx\""
+    curl -X POST "${BLACKDUCK_URL}/api/scan/data?projectName=${BD_PROJECT_NAME}&versionName=${BD_VERSION}" \
+         -H "Authorization: Bearer $BLACKDUCK_TOKEN" \
+         -H "Content-Type: multipart/form-data" \
+         -F "file=@$OUTPUT_FILE;type=application/vnd.cyclonedx"
 
-    log "Integrated scan and upload task completed for paths [$TARGET_DIRS] on server [$HOSTNAME]."
+    log "Integrated scan and upload task completed for paths [$TARGET_PATHS] on server [$HOSTNAME]."
 }
 
 # Main Execution Logic
@@ -300,17 +300,17 @@ case "$1" in
         # Parse setup arguments
         shift
         SETUP_PROJECT_NAME=""
-        SETUP_TARGET_DIRS=""
+        SETUP_TARGET_PATHS=""
         while [[ $# -gt 0 ]]; do
             case $1 in
                 --project-name|-p)
                     SETUP_PROJECT_NAME="$2"
                     shift 2
                     ;;
-                --target-dirs|-t)
+                --target-path|-t)
                     shift
                     while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do
-                        SETUP_TARGET_DIRS="$SETUP_TARGET_DIRS $1"
+                        SETUP_TARGET_PATHS="$SETUP_TARGET_PATHS $1"
                         shift
                     done
                     ;;
@@ -333,17 +333,17 @@ case "$1" in
         # Execute scan + Black Duck upload only without cron (sudo not required)
         shift
         OVERRIDE_PROJECT_NAME=""
-        OVERRIDE_TARGET_DIRS=""
+        OVERRIDE_TARGET_PATHS=""
         while [[ $# -gt 0 ]]; do
             case $1 in
                 --project-name|-p)
                     OVERRIDE_PROJECT_NAME="$2"
                     shift 2
                     ;;
-                --target-dirs|-t)
+                --target-path|-t)
                     shift
                     while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do
-                        OVERRIDE_TARGET_DIRS="$OVERRIDE_TARGET_DIRS $1"
+                        OVERRIDE_TARGET_PATHS="$OVERRIDE_TARGET_PATHS $1"
                         shift
                     done
                     ;;
@@ -362,7 +362,7 @@ case "$1" in
         ;;
     *)
         echo "Usage:"
-        echo "  sudo bash $0 --setup --project-name <name> --target-dirs <dir1> <dir2> ...  - Initial setup and cron registration"
+        echo "  sudo bash $0 --setup --project-name <name> --target-path <path1> <path2> ...  - Initial setup and cron registration"
         echo "  sudo bash $0 --run                                                          - Run manual scan"
         echo "  bash $0 --scan-only [--project-name <name>]                                 - Run scan only without cron (sudo not required)"
         echo "  sudo bash $0 --cron                                                         - Automatic execution by cron"
