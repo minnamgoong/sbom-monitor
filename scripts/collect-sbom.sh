@@ -203,7 +203,7 @@ setup_agent() {
         exit 1
     fi
 
-    # Create deterministic schedule based on MAC address (weekly, off-business hours: 12:00 ~ 08:00)
+    # Create deterministic schedule based on MAC address (weekly, off-business hours: 20:00 ~ 07:00)
     # Get seed using base interface MAC address
     DEFAULT_IF=$(ip route show default | awk '/default/ {print $5}')
     MAC_ADDR=$(cat /sys/class/net/${DEFAULT_IF}/address | tr -d ':')
@@ -216,10 +216,10 @@ setup_agent() {
         SEED=$((16#${MAC_ADDR: -8}))
     fi
 
-    # Set hours: 12:00 ~ 08:00 (20 hour candidates)
-    HOURS=(12 13 14 15 16 17 18 19 20 21 22 23 0 1 2 3 4 5 6 7)
+    # Set hours: 20:00 ~ 07:00 (12 hour candidates)
+    HOURS=(20 21 22 23 0 1 2 3 4 5 6 7)
     
-    SCHED_HOUR=${HOURS[$((SEED % 20))]}
+    SCHED_HOUR=${HOURS[$((SEED % 12))]}
     SCHED_MIN=$((SEED % 60))
     SCHED_DOW=$((SEED % 7)) # 0-6 (Sun-Sat)
 
