@@ -41,8 +41,8 @@ find_latest_syft_url() {
         exit 1
     fi
 
-    # Search using a general keyword query (q=syft) to bypass raw repo restrictions on 'name' and 'version' properties
-    SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&q=syft"
+    # Search using a specific keyword query to bypass raw repo restrictions
+    SEARCH_URL="${NEXUS_URL}/service/rest/v1/search/assets?repository=${NEXUS_SYFT_REPO}&q=syft*linux_${SYFT_ARCH}"
     
     log "Searching for latest Syft binary via Nexus API..."
     echo "[DEBUG] Executing: curl -sSL \"$SEARCH_URL\""
@@ -247,6 +247,11 @@ run_scan() {
     if [[ -n "$OVERRIDE_PROJECT_NAME" ]]; then
         BD_PROJECT_NAME="$OVERRIDE_PROJECT_NAME"
     fi
+    
+    # Override target directories if OVERRIDE_TARGET_DIRS is set via command line
+    if [[ -n "$(echo $OVERRIDE_TARGET_DIRS | xargs)" ]]; then
+        TARGET_DIRS="$(echo $OVERRIDE_TARGET_DIRS | xargs)"
+    fi
 
     HOSTNAME=$(hostname)
     TIMESTAMP=$(date +%Y%m%d%H%M%S)
@@ -318,11 +323,19 @@ case "$1" in
         # Execute scan + Black Duck upload only without cron (sudo not required)
         shift
         OVERRIDE_PROJECT_NAME=""
+        OVERRIDE_TARGET_DIRS=""
         while [[ $# -gt 0 ]]; do
             case $1 in
                 --project-name|-p)
                     OVERRIDE_PROJECT_NAME="$2"
                     shift 2
+                    ;;
+                --target-dirs|-t)
+                    shift
+                    while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do
+                        OVERRIDE_TARGET_DIRS="$OVERRIDE_TARGET_DIRS $1"
+                        shift
+                    done
                     ;;
                 *)
                     echo "[ERROR] Unknown option for --scan-only: $1"
