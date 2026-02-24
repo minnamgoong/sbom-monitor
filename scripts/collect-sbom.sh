@@ -83,34 +83,34 @@ download_and_install_syft() {
 
 # 0. 자가 업데이트 함수
 check_for_updates() {
+    local SKIP_SCRIPT_UPDATE="$1"
+    shift # Remove the SKIP_SCRIPT_UPDATE flag so $@ contains the original runtime arguments
+    
     # Ensure bin directory exists for temp files to avoid curl (23) error
     mkdir -p "$AGENT_DIR"
-    # Prevent infinite loop during self-update
-    if [[ "$1" == "--no-self-update" ]]; then
-        shift
-        return
-    fi
 
-    # 0.1. Always download the latest script
-    log "Fetching latest script from Nexus3..."
-    NEW_SCRIPT="${AGENT_DIR}/collect-sbom.sh.new"
-    # Nexus directory rule: the first letter of the filename is the directory name
-    REMOTE_SCRIPT_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/c/collect-sbom.sh"
-    
-    # Try to download. If it fails (e.g. network issue), just proceed with current script.
-    echo "[DEBUG] Executing: $CURL_CMD -o \"$NEW_SCRIPT\" \"$REMOTE_SCRIPT_URL\""
-    if $CURL_CMD -o "$NEW_SCRIPT" "$REMOTE_SCRIPT_URL"; then
-        if ! diff -q "$NEW_SCRIPT" "$(realpath $0)" >/dev/null 2>&1; then
-            log "Newer or different script found. Updating and restarting..."
-            mv "$NEW_SCRIPT" "$(realpath $0)"
-            chmod +x "$(realpath $0)"
-            exec bash "$(realpath $0)" --no-self-update "$@"
+    if [[ "$SKIP_SCRIPT_UPDATE" != "true" ]]; then
+        # 0.1. Always download the latest script
+        log "Fetching latest script from Nexus3..."
+        NEW_SCRIPT="${AGENT_DIR}/collect-sbom.sh.new"
+        # Nexus directory rule: the first letter of the filename is the directory name
+        REMOTE_SCRIPT_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/c/collect-sbom.sh"
+        
+        # Try to download. If it fails (e.g. network issue), just proceed with current script.
+        echo "[DEBUG] Executing: $CURL_CMD -o \"$NEW_SCRIPT\" \"$REMOTE_SCRIPT_URL\""
+        if $CURL_CMD -o "$NEW_SCRIPT" "$REMOTE_SCRIPT_URL"; then
+            if ! diff -q "$NEW_SCRIPT" "$(realpath $0)" >/dev/null 2>&1; then
+                log "Newer or different script found. Updating and restarting..."
+                mv "$NEW_SCRIPT" "$(realpath $0)"
+                chmod +x "$(realpath $0)"
+                exec bash "$(realpath $0)" --no-self-update "$@"
+            else
+                log "Script is already the latest version."
+                rm -f "$NEW_SCRIPT"
+            fi
         else
-            log "Script is already the latest version."
-            rm -f "$NEW_SCRIPT"
+            log "[WARN] Failed to fetch latest script from Nexus. Proceeding with current version."
         fi
-    else
-        log "[WARN] Failed to fetch latest script from Nexus. Proceeding with current version."
     fi
 
     # 0.2. Check for Syft binary updates
@@ -306,7 +306,13 @@ run_scan() {
 }
 
 # Main Execution Logic
-check_for_updates "$@"
+SKIP_SCRIPT_UPDATE="false"
+if [[ "$1" == "--no-self-update" ]]; then
+    SKIP_SCRIPT_UPDATE="true"
+    shift # Remove this pseudo-parameter so the rest of the cases parse correctly
+fi
+
+check_for_updates "$SKIP_SCRIPT_UPDATE" "$@"
 
 case "$1" in
     --setup)
