@@ -281,15 +281,28 @@ run_scan() {
     log "SBOM generation completed: $OUTPUT_FILE"
 
     # Black Duck Upload Logic
-    # Upload the integrated SBOM file through the latest Black Duck API (/api/scan/data).
-    log "Sending integrated SBOM to Black Duck (Project: $BD_PROJECT_NAME, Version: $BD_VERSION)..."
-    echo "[DEBUG] Executing: curl -X POST \"${BLACKDUCK_URL}/api/scan/data?projectName=${BD_PROJECT_NAME}&versionName=${BD_VERSION}\" -H \"Authorization: Bearer \$BLACKDUCK_TOKEN\" -H \"Content-Type: multipart/form-data\" -F \"file=@$OUTPUT_FILE;type=application/vnd.cyclonedx\""
-    curl -X POST "${BLACKDUCK_URL}/api/scan/data?projectName=${BD_PROJECT_NAME}&versionName=${BD_VERSION}" \
-         -H "Authorization: Bearer $BLACKDUCK_TOKEN" \
-         -H "Content-Type: multipart/form-data" \
-         -F "file=@$OUTPUT_FILE;type=application/vnd.cyclonedx"
+    # 1. Authenticate to get JWT (Bearer Token)
+    log "Authenticating with Black Duck API to obtain JWT token..."
+    AUTH_RESPONSE=$(curl -k -s -X POST "${BLACKDUCK_URL}/api/tokens/authenticate" \
+         -H "Authorization: token ${BLACKDUCK_TOKEN}")
+    
+    # Extract bearerToken
+    JWT_TOKEN=$(echo "$AUTH_RESPONSE" | sed -n 's/.*"bearerToken":"\([^"]*\)".*/\1/p')
 
-    log "Integrated scan and upload task completed for paths [$TARGET_PATHS] on server [$HOSTNAME]."
+    if [[ -z "$JWT_TOKEN" ]]; then
+        log "[ERROR] Black Duck authentication failed. Could not retrieve JWT token."
+        log "[DEBUG] Auth Response: $AUTH_RESPONSE"
+    else
+        # 2. Upload the integrated SBOM file through the latest Black Duck API (/api/scan/data).
+        log "Sending integrated SBOM to Black Duck (Project: $BD_PROJECT_NAME, Version: $BD_VERSION)..."
+        echo "[DEBUG] Executing SBOM Upload: curl -k -X POST \"${BLACKDUCK_URL}/api/scan/data?projectName=${BD_PROJECT_NAME}&versionName=${BD_VERSION}\" -H \"Authorization: Bearer <HIDDEN_JWT>\" ..."
+        curl -k -X POST "${BLACKDUCK_URL}/api/scan/data?projectName=${BD_PROJECT_NAME}&versionName=${BD_VERSION}" \
+             -H "Authorization: Bearer $JWT_TOKEN" \
+             -H "Content-Type: multipart/form-data" \
+             -F "file=@$OUTPUT_FILE;type=application/vnd.cyclonedx"
+             
+        log "Integrated scan and upload task completed for paths [$TARGET_PATHS] on server [$HOSTNAME]."
+    fi
 }
 
 # Main Execution Logic
