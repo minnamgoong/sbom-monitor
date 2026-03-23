@@ -77,6 +77,18 @@ bash collect-sbom.sh --scan-only --project-name my-temp-project
 15 3 * * 5 root /bin/bash /path/to/sbom-monitor/collect-sbom.sh --cron >> /path/to/sbom-monitor/log/sbom-monitor.log 2>&1
 ```
 
+### 3.5. 테스트 크론 등록 및 시스템 스케줄 해제 (`--test-cron`, `--remove-cron`)
+기본적으로 `--setup` 시 등록되는 주 1회 스케줄 대신, 개발 단계에서 테스트 목적으로 잦은 실행이 필요하거나, 더 이상 에이전트를 시스템 스케줄 기반으로 자동 실행하지 않고자 할 때 사용하는 옵션입니다.
+**sudo 권한**이 요구됩니다.
+
+```bash
+# 빠른 동작 테스트를 위해 20분 간격(*/20 * * * *)으로 크론 스케줄을 덮어씀
+sudo bash collect-sbom.sh --test-cron
+
+# 등록된 시스템 크론 스케줄(기본 주 1회 또는 테스트용 스케줄 모두)을 즉시 삭제
+sudo bash collect-sbom.sh --remove-cron
+```
+
 ## 4. 자가 업데이트 로직 (Self-Update)
 에이전트는 실행될 때마다(수동/자동 무관) 상단에서 자체적으로 업데이트 로직을 수행합니다.
 

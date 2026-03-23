@@ -344,6 +344,24 @@ case "$1" in
         fi
         setup_agent
         ;;
+    --test-cron)
+        if [[ $EUID -ne 0 ]]; then
+            log "[ERROR] sudo privilege is required to register crontab. Please run again with sudo."
+            exit 1
+        fi
+        CRON_JOB="*/20 * * * * root /bin/bash $(realpath $0) --cron >> $LOG_FILE 2>&1"
+        echo "$CRON_JOB" > /etc/cron.d/sbom-monitor
+        chmod 644 /etc/cron.d/sbom-monitor
+        log "Test schedule registration completed (every 20 minutes): */20 * * * *"
+        ;;
+    --remove-cron)
+        if [[ $EUID -ne 0 ]]; then
+            log "[ERROR] sudo privilege is required to remove crontab. Please run again with sudo."
+            exit 1
+        fi
+        rm -f /etc/cron.d/sbom-monitor
+        log "Crontab schedule (/etc/cron.d/sbom-monitor) has been removed."
+        ;;
     --cron)
         # Automatic execution via cron
         run_scan
@@ -385,6 +403,8 @@ case "$1" in
         echo "  sudo bash $0 --run                                                          - Run manual scan"
         echo "  bash $0 --scan-only [--project-name <name>]                                 - Run scan only without cron (sudo not required)"
         echo "  sudo bash $0 --cron                                                         - Automatic execution by cron"
+        echo "  sudo bash $0 --test-cron                                                    - Register test schedule (every 20 min)"
+        echo "  sudo bash $0 --remove-cron                                                  - Remove registered crontab"
         if [[ ! -f "$CONFIG_FILE" ]]; then
             echo -e "\n[INFO] You need to run --setup first because config.conf is missing."
         fi
