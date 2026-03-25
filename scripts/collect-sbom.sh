@@ -284,7 +284,7 @@ run_scan() {
     # 1. Authenticate to get JWT (Bearer Token)
     log "Authenticating with Black Duck API to obtain JWT token..."
     AUTH_RESPONSE=$(curl -k -s -X POST "${BLACKDUCK_URL}/api/tokens/authenticate" \
-         -H "Authorization: token ${BLACKDUCK_TOKEN}")
+         -H "Authorization: token ${BLACKDUCK_TOKEN}" 2>&1) || true
     
     # Extract bearerToken
     JWT_TOKEN=$(echo "$AUTH_RESPONSE" | sed -n 's/.*"bearerToken":"\([^"]*\)".*/\1/p')
@@ -295,13 +295,22 @@ run_scan() {
     else
         # 2. Upload the integrated SBOM file through the latest Black Duck API (/api/scan/data).
         log "Sending integrated SBOM to Black Duck (Project: $BD_PROJECT_NAME, Version: $BD_VERSION)..."
-        echo "[DEBUG] Executing SBOM Upload: curl -k -X POST \"${BLACKDUCK_URL}/api/scan/data?projectName=${BD_PROJECT_NAME}&versionName=${BD_VERSION}\" -H \"Authorization: Bearer <HIDDEN_JWT>\" ..."
-        curl -k -X POST "${BLACKDUCK_URL}/api/scan/data?projectName=${BD_PROJECT_NAME}&versionName=${BD_VERSION}" \
+        echo "[DEBUG] Executing SBOM Upload: curl -k -s -X POST \"${BLACKDUCK_URL}/api/scan/data\" -H \"Authorization: Bearer <HIDDEN_JWT>\" -F projectName=... -F versionName=... -F file=..."
+        UPLOAD_RESPONSE=$(curl -k -s -w "\n%{http_code}" -X POST "${BLACKDUCK_URL}/api/scan/data" \
              -H "Authorization: Bearer $JWT_TOKEN" \
-             -H "Content-Type: multipart/form-data" \
-             -F "file=@$OUTPUT_FILE;type=application/vnd.cyclonedx"
-             
-        log "Integrated scan and upload task completed for paths [$TARGET_PATHS] on server [$HOSTNAME]."
+             -F "projectName=${BD_PROJECT_NAME}" \
+             -F "versionName=${BD_VERSION}" \
+             -F "file=@$OUTPUT_FILE;type=application/vnd.cyclonedx" 2>&1) || true
+        
+        UPLOAD_HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | tail -n1)
+        UPLOAD_BODY=$(echo "$UPLOAD_RESPONSE" | sed '$d')
+        
+        if [[ "$UPLOAD_HTTP_CODE" =~ ^2[0-9]{2}$ ]]; then
+            log "Integrated scan and upload task completed for paths [$TARGET_PATHS] on server [$HOSTNAME]. (HTTP $UPLOAD_HTTP_CODE)"
+        else
+            log "[ERROR] Black Duck SBOM upload failed. (HTTP $UPLOAD_HTTP_CODE)"
+            log "[DEBUG] Upload Response: $UPLOAD_BODY"
+        fi
     fi
 }
 
