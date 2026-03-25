@@ -283,8 +283,10 @@ run_scan() {
     # Black Duck Upload Logic
     # 1. Authenticate to get JWT (Bearer Token)
     log "Authenticating with Black Duck API to obtain JWT token..."
+    AUTH_STDERR=$(mktemp)
     AUTH_RESPONSE=$(curl -k -s -X POST "${BLACKDUCK_URL}/api/tokens/authenticate" \
-         -H "Authorization: token ${BLACKDUCK_TOKEN}" 2>&1) || true
+         -H "Authorization: token ${BLACKDUCK_TOKEN}" \
+         -H "Content-Type: application/json" 2>"$AUTH_STDERR") || true
     
     # Extract bearerToken
     JWT_TOKEN=$(echo "$AUTH_RESPONSE" | sed -n 's/.*"bearerToken":"\([^"]*\)".*/\1/p')
@@ -292,15 +294,17 @@ run_scan() {
     if [[ -z "$JWT_TOKEN" ]]; then
         log "[ERROR] Black Duck authentication failed. Could not retrieve JWT token."
         log "[DEBUG] Auth Response: $AUTH_RESPONSE"
+        [[ -s "$AUTH_STDERR" ]] && log "[DEBUG] Auth Stderr: $(cat "$AUTH_STDERR")"
     else
         # 2. Upload the integrated SBOM file through the latest Black Duck API (/api/scan/data).
         log "Sending integrated SBOM to Black Duck (Project: $BD_PROJECT_NAME, Version: $BD_VERSION)..."
         echo "[DEBUG] Executing SBOM Upload: curl -k -s -X POST \"${BLACKDUCK_URL}/api/scan/data\" -H \"Authorization: Bearer <HIDDEN_JWT>\" -F projectName=... -F versionName=... -F file=..."
+        UPLOAD_STDERR=$(mktemp)
         UPLOAD_RESPONSE=$(curl -k -s -w "\n%{http_code}" -X POST "${BLACKDUCK_URL}/api/scan/data" \
              -H "Authorization: Bearer $JWT_TOKEN" \
              -F "projectName=${BD_PROJECT_NAME}" \
              -F "versionName=${BD_VERSION}" \
-             -F "file=@$OUTPUT_FILE;type=application/vnd.cyclonedx" 2>&1) || true
+             -F "file=@$OUTPUT_FILE;type=application/vnd.cyclonedx" 2>"$UPLOAD_STDERR") || true
         
         UPLOAD_HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | tail -n1)
         UPLOAD_BODY=$(echo "$UPLOAD_RESPONSE" | sed '$d')
@@ -310,6 +314,7 @@ run_scan() {
         else
             log "[ERROR] Black Duck SBOM upload failed. (HTTP $UPLOAD_HTTP_CODE)"
             log "[DEBUG] Upload Response: $UPLOAD_BODY"
+            [[ -s "$UPLOAD_STDERR" ]] && log "[DEBUG] Upload Stderr: $(cat "$UPLOAD_STDERR")"
         fi
     fi
 }
