@@ -286,6 +286,7 @@ run_scan() {
     AUTH_STDERR=$(mktemp)
     AUTH_RESPONSE=$(curl -k -s -X POST "${BLACKDUCK_URL}/api/tokens/authenticate" \
          -H "Authorization: token ${BLACKDUCK_TOKEN}" \
+         -H "Accept: application/vnd.blackducksoftware.user-4+json" \
          -H "Content-Type: application/json" 2>"$AUTH_STDERR") || true
     
     # Extract bearerToken
